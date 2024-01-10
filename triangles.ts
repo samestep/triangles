@@ -16,6 +16,8 @@ import {
 import seedrandom from "seedrandom";
 import * as lbfgs from "./lbfgs.js";
 
+const sqr = (x: Real): Real => mul(x, x);
+
 const vsub = (a: Real[], b: Real[]): Real[] => a.map((x, i) => sub(x, b[i]));
 
 const dot = (a: Real[], b: Real[]): Real =>
@@ -23,11 +25,7 @@ const dot = (a: Real[], b: Real[]): Real =>
 
 const norm = (v: Real[]): Real => sqrt(dot(v, v));
 
-const area = (a: Real[], b: Real[], c: Real[]): Real => {
-  const ab = norm(vsub(b, a));
-  const bc = norm(vsub(c, b));
-  const ca = norm(vsub(a, c));
-
+const area = (ab: Real, bc: Real, ca: Real): Real => {
   const one = add(add(ab, bc), ca);
   const two = add(add(neg(ab), bc), ca);
   const three = add(sub(ab, bc), ca);
@@ -69,9 +67,18 @@ const lagrangian = fn(
   ({ ax, ay, bx, by, cx, cy }) => {
     return sum(
       vec(numTriangles, Real, (i) => {
-        const a = area([ax[i], ay[i]], [bx[i], by[i]], [cx[i], cy[i]]);
-        const d = sub(a, 0.01);
-        return mul(d, d);
+        const a = [ax[i], ay[i]];
+        const b = [bx[i], by[i]];
+        const c = [cx[i], cy[i]];
+
+        const ab = norm(vsub(b, a));
+        const bc = norm(vsub(c, b));
+        const ca = norm(vsub(a, c));
+
+        return add(
+          sqr(sub(area(ab, bc, ca), 0.01)),
+          add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
+        );
       }),
     );
   },
@@ -177,7 +184,7 @@ const optimize = (triangles: Triangle[]): Triangle[] => {
   const state = lbfgs.firstStep(cfg, grad, x);
   let i = 0;
   lbfgs.stepUntil(cfg, grad, x, state, () => {
-    if (++i >= 10) return true;
+    if (++i >= 100) return true;
   });
   return deserialize(x);
 };
