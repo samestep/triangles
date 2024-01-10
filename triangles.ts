@@ -115,12 +115,12 @@ const compiled = await compile(
 
 const grad: lbfgs.Fn = (x: Float64Array, dx: Float64Array): number => {
   const { z, ax, ay, bx, by, cx, cy } = compiled({
-    ax: Array.from(x.subarray(0, numTriangles)),
-    ay: Array.from(x.subarray(numTriangles, numTriangles * 2)),
-    bx: Array.from(x.subarray(numTriangles * 2, numTriangles * 3)),
-    by: Array.from(x.subarray(numTriangles * 3, numTriangles * 4)),
-    cx: Array.from(x.subarray(numTriangles * 4, numTriangles * 5)),
-    cy: Array.from(x.subarray(numTriangles * 5, numTriangles * 6)),
+    ax: x.subarray(0, numTriangles) as any,
+    ay: x.subarray(numTriangles, numTriangles * 2) as any,
+    bx: x.subarray(numTriangles * 2, numTriangles * 3) as any,
+    by: x.subarray(numTriangles * 3, numTriangles * 4) as any,
+    cx: x.subarray(numTriangles * 4, numTriangles * 5) as any,
+    cy: x.subarray(numTriangles * 5, numTriangles * 6) as any,
   });
 
   // https://github.com/rose-lang/rose/issues/111
