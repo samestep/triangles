@@ -1,24 +1,46 @@
 #!/usr/bin/env bun
 
 import {
+  Bool,
   Real,
   Vec,
   add,
+  and,
   compile,
+  div,
   fn,
+  geq,
+  gt,
+  lt,
   mul,
   neg,
+  not,
+  or,
+  select,
   sqrt,
   sub,
   vec,
   vjp,
 } from "rose";
 import seedrandom from "seedrandom";
-import * as lbfgs from "./lbfgs.js";
+import * as optimizer from "./optimizer.js";
 
 const sqr = (x: Real): Real => mul(x, x);
 
+const max = (a: Real, b: Real) => select(gt(a, b), Real, a, b);
+
+const min = (a: Real, b: Real): Real => select(lt(a, b), Real, a, b);
+
+const clamp = (x: Real, l: Real, h: Real): Real =>
+  select(lt(x, l), Real, l, select(lt(h, x), Real, h, x));
+
+const all = (xs: Bool[]): Bool => xs.reduce((a, b) => and(a, b));
+
+const vnot = (xs: Bool[]): Bool[] => xs.map((x) => not(x));
+
 const vsub = (a: Real[], b: Real[]): Real[] => a.map((x, i) => sub(x, b[i]));
+
+const vmul = (v: Real[], c: Real): Real[] => v.map((x) => mul(x, c));
 
 const dot = (a: Real[], b: Real[]): Real =>
   a.map((x, i) => mul(x, b[i])).reduce((a, b) => add(a, b));
@@ -32,6 +54,30 @@ const area = (ab: Real, bc: Real, ca: Real): Real => {
   const four = sub(add(ab, bc), ca);
 
   return mul(0.25, sqrt(mul(mul(mul(one, two), three), four)));
+};
+
+// https://iquilezles.org/articles/distfunctions2d/
+const sdPolygon = (v: Real[][], p: Real[]): Real => {
+  const N = v.length;
+  let d = dot(vsub(p, v[0]), vsub(p, v[0]));
+  let s: Real = 1.0;
+  for (let i = 0, j = N - 1; i < N; j = i, i++) {
+    const e = vsub(v[j], v[i]);
+    const w = vsub(p, v[i]);
+    const b = vsub(w, vmul(e, clamp(div(dot(w, e), dot(e, e)), 0.0, 1.0)));
+    d = min(d, dot(b, b));
+    const c = [
+      geq(p[1], v[i][1]),
+      lt(p[1], v[j][1]),
+      gt(mul(e[0], w[1]), mul(e[1], w[0])),
+    ];
+    s = select(or(all(c), all(vnot(c))), Real, neg(s), s);
+  }
+  return mul(s, sqrt(d));
+};
+
+const triangleSum = (p: Real[][], q: Real[][]): Real[][] => {
+  return p; // TODO
 };
 
 type Vec2 = number[];
@@ -61,25 +107,52 @@ const lagrangian = fn(
       by: Vec(numTriangles, Real),
       cx: Vec(numTriangles, Real),
       cy: Vec(numTriangles, Real),
+      weight: Real,
     },
   ],
   Real,
-  ({ ax, ay, bx, by, cx, cy }) => {
-    return sum(
-      vec(numTriangles, Real, (i) => {
-        const a = [ax[i], ay[i]];
-        const b = [bx[i], by[i]];
-        const c = [cx[i], cy[i]];
+  ({ ax, ay, bx, by, cx, cy, weight }) => {
+    return add(
+      sum(
+        vec(numTriangles, Real, (i) => {
+          const a = [ax[i], ay[i]];
+          const b = [bx[i], by[i]];
+          const c = [cx[i], cy[i]];
 
-        const ab = norm(vsub(b, a));
-        const bc = norm(vsub(c, b));
-        const ca = norm(vsub(a, c));
+          const ab = norm(vsub(b, a));
+          const bc = norm(vsub(c, b));
+          const ca = norm(vsub(a, c));
 
-        return add(
-          sqr(sub(area(ab, bc, ca), 0.01)),
-          add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
-        );
-      }),
+          return add(
+            sqr(sub(area(ab, bc, ca), 0.01)),
+            add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
+          );
+        }),
+      ),
+      mul(
+        weight,
+        sum(
+          vec(numTriangles, Real, (i) =>
+            sum(
+              vec(numTriangles, Real, (j) => {
+                const diff = triangleSum(
+                  [
+                    [ax[i], ay[i]],
+                    [bx[i], by[i]],
+                    [cx[i], cy[i]],
+                  ],
+                  [
+                    [neg(ax[j]), neg(ay[j])],
+                    [neg(bx[j]), neg(by[j])],
+                    [neg(cx[j]), neg(cy[j])],
+                  ],
+                );
+                return sqr(max(0, neg(sdPolygon(diff, [0, 0]))));
+              }),
+            ),
+          ),
+        ),
+      ),
     );
   },
 );
@@ -94,6 +167,7 @@ const compiled = await compile(
         by: Vec(numTriangles, Real),
         cx: Vec(numTriangles, Real),
         cy: Vec(numTriangles, Real),
+        weight: Real,
       },
     ],
     {
@@ -113,7 +187,11 @@ const compiled = await compile(
   ),
 );
 
-const grad: lbfgs.Fn = (x: Float64Array, dx: Float64Array): number => {
+const grad: optimizer.Fn = (
+  x: Float64Array,
+  weight: number,
+  dx: Float64Array,
+): number => {
   const { z, ax, ay, bx, by, cx, cy } = compiled({
     ax: x.subarray(0, numTriangles) as any,
     ay: x.subarray(numTriangles, numTriangles * 2) as any,
@@ -121,6 +199,7 @@ const grad: lbfgs.Fn = (x: Float64Array, dx: Float64Array): number => {
     by: x.subarray(numTriangles * 3, numTriangles * 4) as any,
     cx: x.subarray(numTriangles * 4, numTriangles * 5) as any,
     cy: x.subarray(numTriangles * 5, numTriangles * 6) as any,
+    weight,
   });
 
   // https://github.com/rose-lang/rose/issues/111
@@ -172,20 +251,10 @@ const deserialize = (x: Float64Array): Triangle[] => {
 };
 
 const optimize = (triangles: Triangle[]): Triangle[] => {
-  const cfg: lbfgs.Config = {
-    m: 17,
-    armijo: 0.001,
-    wolfe: 0.9,
-    minInterval: 1e-9,
-    maxSteps: 10,
-    epsd: 1e-11,
-  };
   const x = serialize(triangles);
-  const state = lbfgs.firstStep(cfg, grad, x);
-  let i = 0;
-  lbfgs.stepUntil(cfg, grad, x, state, () => {
-    if (++i >= 100) return true;
-  });
+  let params = optimizer.start(numTriangles * 6);
+  while (params.optStatus !== "EPConverged")
+    params = optimizer.stepUntil(grad, x, params, () => false);
   return deserialize(x);
 };
 
