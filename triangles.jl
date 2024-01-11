@@ -1,12 +1,26 @@
-#!/usr/bin/env julia
-
-import Base.@kwdef
+import LinearAlgebra.norm
 import Random
+import Zygote
 
 @kwdef struct Triangle
   a
   b
   c
+end
+
+function area(ab, bc, ca)
+  0.25 * sqrt(
+    (ab + bc + ca) * (-ab + bc + ca) * (ab - bc + ca) * (ab + bc - ca)
+  )
+end
+
+function objective(triangles)
+  sum(triangles) do (; a, b, c)
+    ab = norm(b - a)
+    bc = norm(c - b)
+    ca = norm(a - c)
+    (area(ab, bc, ca) - 0.01)^2 + (ab - bc)^2 + (bc - ca)^2 + (ca - ab)^2
+  end
 end
 
 function init(seed)
@@ -18,6 +32,22 @@ function init(seed)
       b=[rand(), rand()],
       c=[rand(), rand()],
     ))
+  end
+  triangles
+end
+
+rate = 0.1
+
+function optimize(triangles)
+  for _ in 1:1000
+    grad = Zygote.gradient(objective, triangles)
+    triangles = map(zip(triangles, grad[1])) do (triangle, triangle_grad)
+      Triangle(
+        a=triangle.a - rate * triangle_grad.a,
+        b=triangle.b - rate * triangle_grad.b,
+        c=triangle.c - rate * triangle_grad.c,
+      )
+    end
   end
   triangles
 end
@@ -38,7 +68,7 @@ end
 
 function main()
   original = init(0)
-  optimized = original
+  optimized = optimize(original)
   write("out.svg", svg(optimized))
 end
 

@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - run: ./triangles.jl
+      - run: julia --project=. triangles.jl
       - uses: actions/upload-artifact@v4
         with:
           path: out.svg
