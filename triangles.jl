@@ -149,9 +149,71 @@ end
 
 end
 
-import LinearAlgebra.norm
+using LinearAlgebra: dot, norm
 import Random
 import Zygote
+
+unconstrained_converged(norm_grad) = norm_grad < 1e-2
+
+function ep_converged(x0, x1, fx0, fx1)
+  ep_stop = 1e-3
+  abs(fx1 - fx0) < ep_stop || norm(x1 - x0) < ep_stop
+end
+
+# adapted from https://github.com/penrose/penrose/blob/0ab136a32e8e8d7df2dc896d5702b499a6b4b594/packages/core/src/engine/Optimizer.ts
+function exterior_point!(f, x)
+  cfg = Lbfgs.Config(
+    m=17,
+    armijo=0.001,
+    wolfe=0.9,
+    min_interval=1e-9,
+    max_steps=10,
+    epsd=1e-11,
+  )
+  last_x = copy(x)
+  last_fx = nothing
+  weight = 1e3
+  g = (x, dx) -> f(x, weight, dx)
+  while true
+    fx = nothing
+    state = Lbfgs.first_step!(cfg, g, x)
+    Lbfgs.step_until!(cfg, g, x, state, info -> begin
+      fx = info.fx
+      unconstrained_converged(dot(info.state.grad, info.r))
+    end)
+    # this forces at least one round, but the original optimizer forced two
+    if !isnothing(last_fx) && ep_converged(last_x, x, last_fx, fx)
+      break
+    end
+    last_x .= x
+    last_fx = fx
+    weight *= 10
+  end
+end
+
+function minkowski_sum(p, q)
+  p # TODO
+end
+
+# https://iquilezles.org/articles/distfunctions2d/
+function sd_polygon(v, p)
+  N = length(v)
+  d = dot(p - v[1], p - v[1])
+  s = 1.0
+  j = N
+  for i = 1:N
+    e = v[j] - v[i]
+    w = p - v[i]
+    b = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0)
+    d = min(d, dot(b, b))
+    c = [p[2] >= v[i][2], p[2] < v[j][2], e[1] * w[2] > e[2] * w[1]]
+    if all(c) || all(.!c)
+      s *= -1.0
+    end
+    j = i
+  end
+  s * sqrt(d)
+end
 
 @kwdef struct Triangle
   a
@@ -172,14 +234,23 @@ area(ab, bc, ca) =
     (ab + bc + ca) * (-ab + bc + ca) * (ab - bc + ca) * (ab + bc - ca)
   )
 
-function objective(serialized)
-  sum(chunks(serialized)) do chunk
+function lagrangian(serialized, weight)
+  obj = sum(chunks(serialized)) do chunk
     (; a, b, c) = deserialize(chunk)
     ab = norm(b - a)
     bc = norm(c - b)
     ca = norm(a - c)
     (area(ab, bc, ca) - 0.01)^2 + (ab - bc)^2 + (bc - ca)^2 + (ca - ab)^2
   end
+  constrs = sum(chunks(serialized)) do left
+    p = deserialize(left)
+    sum(chunks(serialized)) do right
+      q = deserialize(right)
+      diff = minkowski_sum([p.a, p.b, p.c], [-q.a, -q.b, -q.c])
+      max(0, -sd_polygon(diff, [0, 0]))^2
+    end
+  end
+  obj + weight * constrs
 end
 
 function init(seed)
@@ -195,8 +266,8 @@ function init(seed)
   triangles
 end
 
-function obj_and_grad(x, dx)
-  (; val, grad) = Zygote.withgradient(objective, x)
+function val_and_grad(x, weight, dx)
+  (; val, grad) = Zygote.withgradient(lagrangian, x, weight)
   dx .= first(grad)
   val
 end
@@ -211,9 +282,7 @@ function optimize(triangles)
     epsd=1e-11,
   )
   x = vcat([vcat(t.a, t.b, t.c) for t in triangles]...)
-  state = Lbfgs.first_step!(cfg, obj_and_grad, x)
-  i = 0
-  Lbfgs.step_until!(cfg, obj_and_grad, x, state, info -> (i += 1) >= 100)
+  exterior_point!(val_and_grad, x)
   [deserialize(chunk) for chunk in chunks(x)]
 end
 
