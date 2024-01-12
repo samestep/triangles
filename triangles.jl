@@ -242,6 +242,10 @@ function sd_polygon(v, p)
   s * sqrt(d)
 end
 
+unit_interval(x) = min(0, x, 1 - x)^2
+
+in_bounds(v) = sum(unit_interval(x) for x in v)
+
 @kwdef struct Triangle
   a
   b
@@ -266,14 +270,18 @@ clockwise((; a, b, c)) =
   (b[1] - a[1]) * (c[2] - a[2]) < (c[1] - a[1]) * (b[2] - a[2])
 
 function lagrangian(serialized, weight)
-  obj = sum(chunks(serialized)) do chunk
+  equilateral = sum(chunks(serialized)) do chunk
     (; a, b, c) = deserialize(chunk)
     ab = norm(b - a)
     bc = norm(c - b)
     ca = norm(a - c)
-    (area(ab, bc, ca) - 0.01)^2 + (ab - bc)^2 + (bc - ca)^2 + (ca - ab)^2
+    (area(ab, bc, ca) - 0.001)^2 + (ab - bc)^2 + (bc - ca)^2 + (ca - ab)^2
   end
-  constrs = sum(enumerate(chunks(serialized))) do (i, left)
+  canvas = sum(chunks(serialized)) do chunk
+    (; a, b, c) = deserialize(chunk)
+    in_bounds(a) + in_bounds(b) + in_bounds(c)
+  end
+  disjoint = sum(enumerate(chunks(serialized))) do (i, left)
     t1 = deserialize(left)
     p = clockwise(t1) ? [t1.c, t1.b, t1.a] : [t1.a, t1.b, t1.c]
     sum(enumerate(chunks(serialized))) do (j, right)
@@ -282,10 +290,10 @@ function lagrangian(serialized, weight)
       end
       t2 = deserialize(right)
       q = clockwise(t2) ? [-t2.a, -t2.b, -t2.c] : [-t2.c, -t2.b, -t2.a]
-      max(0, -sd_polygon(minkowski_sum(p, q), [0, 0]))^2
+      min(0, sd_polygon(minkowski_sum(p, q), [0, 0]))^2
     end
   end
-  obj + weight * constrs
+  equilateral + weight * (canvas + disjoint)
 end
 
 function init(seed)
