@@ -273,10 +273,13 @@ function lagrangian(serialized, weight)
     ca = norm(a - c)
     (area(ab, bc, ca) - 0.01)^2 + (ab - bc)^2 + (bc - ca)^2 + (ca - ab)^2
   end
-  constrs = sum(chunks(serialized)) do left
+  constrs = sum(enumerate(chunks(serialized))) do (i, left)
     t1 = deserialize(left)
     p = clockwise(t1) ? [t1.c, t1.b, t1.a] : [t1.a, t1.b, t1.c]
-    sum(chunks(serialized)) do right
+    sum(enumerate(chunks(serialized))) do (j, right)
+      if j <= i
+        return 0
+      end
       t2 = deserialize(right)
       q = clockwise(t2) ? [-t2.a, -t2.b, -t2.c] : [-t2.c, -t2.b, -t2.a]
       max(0, -sd_polygon(minkowski_sum(p, q), [0, 0]))^2
