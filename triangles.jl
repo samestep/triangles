@@ -191,8 +191,35 @@ function exterior_point!(f, x)
   end
 end
 
-function minkowski_sum(p, q)
-  p # TODO
+function reorder(p)
+  n = length(p)
+  i = argmin((v[2], v[1]) for v in p)
+  j = ((i - 1) % n) + 1
+  [p[i:n]; p[1:i-1]; p[i:i]; p[j:j]]
+end
+
+cross(u, v) = u[1] * v[2] - u[2] * v[1]
+
+# https://cp-algorithms.com/geometry/minkowski.html
+function minkowski_sum(left, right)
+  m = length(left)
+  n = length(right)
+  p = reorder(left)
+  q = reorder(right)
+  r = Zygote.Buffer([])
+  i = 1
+  j = 1
+  while i <= m || j <= n
+    push!(r, p[i] + q[j])
+    z = cross(p[i+1] - p[i], q[j+1] - q[j])
+    if z >= 0 && i <= m
+      i += 1
+    end
+    if z <= 0 && j <= n
+      j += 1
+    end
+  end
+  copy(r)
 end
 
 # https://iquilezles.org/articles/distfunctions2d/
@@ -234,6 +261,10 @@ area(ab, bc, ca) =
     (ab + bc + ca) * (-ab + bc + ca) * (ab - bc + ca) * (ab + bc - ca)
   )
 
+# https://algs4.cs.princeton.edu/91primitives/
+clockwise((; a, b, c)) =
+  (b[1] - a[1]) * (c[2] - a[2]) < (c[1] - a[1]) * (b[2] - a[2])
+
 function lagrangian(serialized, weight)
   obj = sum(chunks(serialized)) do chunk
     (; a, b, c) = deserialize(chunk)
@@ -243,11 +274,12 @@ function lagrangian(serialized, weight)
     (area(ab, bc, ca) - 0.01)^2 + (ab - bc)^2 + (bc - ca)^2 + (ca - ab)^2
   end
   constrs = sum(chunks(serialized)) do left
-    p = deserialize(left)
+    t1 = deserialize(left)
+    p = clockwise(t1) ? [t1.c, t1.b, t1.a] : [t1.a, t1.b, t1.c]
     sum(chunks(serialized)) do right
-      q = deserialize(right)
-      diff = minkowski_sum([p.a, p.b, p.c], [-q.a, -q.b, -q.c])
-      max(0, -sd_polygon(diff, [0, 0]))^2
+      t2 = deserialize(right)
+      q = clockwise(t2) ? [-t2.a, -t2.b, -t2.c] : [-t2.c, -t2.b, -t2.a]
+      max(0, -sd_polygon(minkowski_sum(p, q), [0, 0]))^2
     end
   end
   obj + weight * constrs
