@@ -1,8 +1,6 @@
 {
   "compilerOptions": {
     "module": "Node16",
-    "resolveJsonModule": true,
-    "strict": true,
-    "types": ["bun-types"]
+    "strict": true
   }
 }
