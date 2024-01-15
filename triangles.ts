@@ -136,22 +136,13 @@ interface Triangle {
   c: Vec2;
 }
 
-const area = (ab: Real, bc: Real, ca: Real): Real => {
-  const one = add(add(ab, bc), ca);
-  const two = add(add(neg(ab), bc), ca);
-  const three = add(sub(ab, bc), ca);
-  const four = sub(add(ab, bc), ca);
-
-  return mul(0.25, sqrt(mul(mul(mul(one, two), three), four)));
-};
-
 const clockwise = (a: Real[], b: Real[], c: Real[]): Bool =>
   lt(
     mul(sub(b[0], a[0]), sub(c[1], a[1])),
     mul(sub(c[0], a[0]), sub(b[1], a[1])),
   );
 
-const numTriangles = 10;
+const numTriangles = 100;
 
 const fanout = fn([Real], Vec(numTriangles, Real), (x) =>
   vec(numTriangles, Real, () => x),
@@ -182,14 +173,13 @@ const lagrangian = fn(
         const a = [ax[i], ay[i]];
         const b = [bx[i], by[i]];
         const c = [cx[i], cy[i]];
-
-        const ab = norm(vsub(b, a));
-        const bc = norm(vsub(c, b));
-        const ca = norm(vsub(a, c));
-
+        const side = Math.sqrt(size ** 2 / (numTriangles * 2));
         return add(
-          sqr(sub(area(ab, bc, ca), (size / 10) ** 2)),
-          add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
+          add(
+            sqr(sub(side, norm(vsub(b, a)))),
+            sqr(sub(side, norm(vsub(c, b)))),
+          ),
+          sqr(sub(side, norm(vsub(a, c)))),
         );
       }),
     );
