@@ -7,4 +7,4 @@ bun install
 ./triangles.ts
 ```
 
-and open `out.svg`.
+and open `out/triangles.svg`.

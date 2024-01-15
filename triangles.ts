@@ -357,7 +357,7 @@ const svg = (triangles: Triangle[]): string => {
 const main = () => {
   const original = init("");
   const optimized = optimize(original);
-  Bun.write("out.svg", svg(optimized));
+  Bun.write("out/triangles.svg", svg(optimized));
 };
 
 main();
