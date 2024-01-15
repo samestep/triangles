@@ -151,8 +151,8 @@ const clockwise = (a: Real[], b: Real[], c: Real[]): Bool =>
   );
 
 const size = 100;
-const numTriangles = 500;
-const side = 5;
+const numTriangles = 100;
+const side = 12;
 
 const fanout = fn([Real], Vec(numTriangles, Real), (x) =>
   vec(numTriangles, Real, () => x),
