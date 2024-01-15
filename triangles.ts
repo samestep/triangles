@@ -2,6 +2,7 @@
 
 import {
   Bool,
+  Dual,
   Nat,
   Real,
   Vec,
@@ -21,15 +22,32 @@ import {
   mul,
   neg,
   not,
+  opaque,
   or,
   select,
   sqrt,
+  struct,
   sub,
   vec,
   vjp,
 } from "rose";
 import seedrandom from "seedrandom";
-import * as optimizer from "./optimizer.js";
+import * as lbfgs from "./lbfgs.js";
+
+const sin = opaque([Real], Real, Math.sin);
+const cos = opaque([Real], Real, Math.cos);
+
+sin.jvp = fn([Dual], Dual, ({ re: x, du: dx }) => {
+  const y = sin(x);
+  const dy = mul(dx, cos(x));
+  return { re: y, du: dy };
+});
+
+cos.jvp = fn([Dual], Dual, ({ re: x, du: dx }) => {
+  const y = cos(x);
+  const dy = mul(dx, neg(sin(x)));
+  return { re: y, du: dy };
+});
 
 const sqr = (x: Real): Real => mul(x, x);
 
@@ -56,8 +74,6 @@ const vmul = (v: Real[], c: Real): Real[] => v.map((x) => mul(x, c));
 
 const dot = (a: Real[], b: Real[]): Real =>
   a.map((x, i) => mul(x, b[i])).reduce((a, b) => add(a, b));
-
-const norm = (v: Real[]): Real => sqrt(dot(v, v));
 
 const cross = (a: Real[], b: Real[]): Real =>
   sub(mul(a[0], b[1]), mul(a[1], b[0]));
@@ -128,21 +144,15 @@ const sdPolygon = (v: Real[][], p: Real[]): Real => {
   return mul(s, sqrt(d));
 };
 
-type Vec2 = number[];
-
-interface Triangle {
-  a: Vec2;
-  b: Vec2;
-  c: Vec2;
-}
-
 const clockwise = (a: Real[], b: Real[], c: Real[]): Bool =>
   lt(
     mul(sub(b[0], a[0]), sub(c[1], a[1])),
     mul(sub(c[0], a[0]), sub(b[1], a[1])),
   );
 
-const numTriangles = 100;
+const size = 100;
+const numTriangles = 600;
+const side = 5;
 
 const fanout = fn([Real], Vec(numTriangles, Real), (x) =>
   vec(numTriangles, Real, () => x),
@@ -152,43 +162,54 @@ const sum = fn([Vec(numTriangles, Real)], Real, (xs) =>
   vjp(fanout)(0).grad(xs),
 );
 
-const size = 100;
+const Triangle = struct({
+  ax: Real,
+  ay: Real,
+  bx: Real,
+  by: Real,
+  cx: Real,
+  cy: Real,
+});
+
+const materialize = fn(
+  [
+    {
+      x: Vec(numTriangles, Real),
+      y: Vec(numTriangles, Real),
+      theta: Vec(numTriangles, Real),
+    },
+  ],
+  Vec(numTriangles, Triangle),
+  ({ x, y, theta }) =>
+    vec(numTriangles, Triangle, (i) => {
+      const a = [x[i], y[i]];
+      const b = vadd(a, [mul(side, cos(theta[i])), mul(side, sin(theta[i]))]);
+      const c = vadd(a, [
+        mul(side, cos(add(theta[i], Math.PI / 3))),
+        mul(side, sin(add(theta[i], Math.PI / 3))),
+      ]);
+      return { ax: a[0], ay: a[1], bx: b[0], by: b[1], cx: c[0], cy: c[1] };
+    }),
+);
 
 const lagrangian = fn(
   [
     {
-      ax: Vec(numTriangles, Real),
-      ay: Vec(numTriangles, Real),
-      bx: Vec(numTriangles, Real),
-      by: Vec(numTriangles, Real),
-      cx: Vec(numTriangles, Real),
-      cy: Vec(numTriangles, Real),
-      weight: Real,
+      x: Vec(numTriangles, Real),
+      y: Vec(numTriangles, Real),
+      theta: Vec(numTriangles, Real),
     },
   ],
   Real,
-  ({ ax, ay, bx, by, cx, cy, weight }) => {
-    const equilateral = sum(
-      vec(numTriangles, Real, (i) => {
-        const a = [ax[i], ay[i]];
-        const b = [bx[i], by[i]];
-        const c = [cx[i], cy[i]];
-        const side = Math.sqrt(size ** 2 / (numTriangles * 2));
-        return add(
-          add(
-            sqr(sub(side, norm(vsub(b, a)))),
-            sqr(sub(side, norm(vsub(c, b)))),
-          ),
-          sqr(sub(side, norm(vsub(a, c)))),
-        );
-      }),
-    );
+  ({ x, y, theta }) => {
+    const triangles = materialize({ x, y, theta });
     const canvas = sum(
       vec(numTriangles, Real, (i) => {
+        const { ax, ay, bx, by, cx, cy } = triangles[i];
         return [
-          [ax[i], ay[i]],
-          [bx[i], by[i]],
-          [cx[i], cy[i]],
+          [ax, ay],
+          [bx, by],
+          [cx, cy],
         ]
           .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(size, x))))))
           .reduce(add);
@@ -196,9 +217,10 @@ const lagrangian = fn(
     );
     const disjoint = sum(
       vec(numTriangles, Real, (i) => {
-        const a1 = [ax[i], ay[i]];
-        const b1 = [bx[i], by[i]];
-        const c1 = [cx[i], cy[i]];
+        let { ax, ay, bx, by, cx, cy } = triangles[i];
+        const a1 = [ax, ay];
+        const b1 = [bx, by];
+        const c1 = [cx, cy];
         const p = select(
           clockwise(a1, b1, c1),
           Vec(3, Vec(2, Real)),
@@ -207,9 +229,10 @@ const lagrangian = fn(
         );
         return sum(
           vec(numTriangles, Real, (j) => {
-            const a2 = [neg(ax[j]), neg(ay[j])];
-            const b2 = [neg(bx[j]), neg(by[j])];
-            const c2 = [neg(cx[j]), neg(cy[j])];
+            ({ ax, ay, bx, by, cx, cy } = triangles[j]);
+            const a2 = [neg(ax), neg(ay)];
+            const b2 = [neg(bx), neg(by)];
+            const c2 = [neg(cx), neg(cy)];
             const q = select(
               clockwise(a1, b1, c1),
               Vec(3, Vec(2, Real)),
@@ -226,7 +249,7 @@ const lagrangian = fn(
         );
       }),
     );
-    return add(equilateral, mul(weight, add(canvas, disjoint)));
+    return add(canvas, disjoint);
   },
 );
 
@@ -234,115 +257,119 @@ const compiled = await compile(
   fn(
     [
       {
-        ax: Vec(numTriangles, Real),
-        ay: Vec(numTriangles, Real),
-        bx: Vec(numTriangles, Real),
-        by: Vec(numTriangles, Real),
-        cx: Vec(numTriangles, Real),
-        cy: Vec(numTriangles, Real),
-        weight: Real,
+        x: Vec(numTriangles, Real),
+        y: Vec(numTriangles, Real),
+        theta: Vec(numTriangles, Real),
       },
     ],
     {
       z: Real,
-      ax: Vec(numTriangles, Real),
-      ay: Vec(numTriangles, Real),
-      bx: Vec(numTriangles, Real),
-      by: Vec(numTriangles, Real),
-      cx: Vec(numTriangles, Real),
-      cy: Vec(numTriangles, Real),
+      x: Vec(numTriangles, Real),
+      y: Vec(numTriangles, Real),
+      theta: Vec(numTriangles, Real),
     },
     (inputs) => {
       const { ret, grad } = vjp(lagrangian)(inputs);
-      const { ax, ay, bx, by, cx, cy } = grad(1);
-      return { z: ret, ax, ay, bx, by, cx, cy };
+      const { x, y, theta } = grad(1);
+      return { z: ret, x, y, theta };
     },
   ),
 );
 
-const grad: optimizer.Fn = (
-  x: Float64Array,
-  weight: number,
-  dx: Float64Array,
-): number => {
-  const { z, ax, ay, bx, by, cx, cy } = compiled({
-    ax: x.subarray(0, numTriangles) as any,
-    ay: x.subarray(numTriangles, numTriangles * 2) as any,
-    bx: x.subarray(numTriangles * 2, numTriangles * 3) as any,
-    by: x.subarray(numTriangles * 3, numTriangles * 4) as any,
-    cx: x.subarray(numTriangles * 4, numTriangles * 5) as any,
-    cy: x.subarray(numTriangles * 5, numTriangles * 6) as any,
-    weight,
+const grad: lbfgs.Fn = (xs: Float64Array, dx: Float64Array): number => {
+  const { z, x, y, theta } = compiled({
+    x: xs.subarray(0, numTriangles) as any,
+    y: xs.subarray(numTriangles, numTriangles * 2) as any,
+    theta: xs.subarray(numTriangles * 2, numTriangles * 3) as any,
   });
 
   // https://github.com/rose-lang/rose/issues/111
-  dx.set(ax as any, 0);
-  dx.set(ay as any, numTriangles);
-  dx.set(bx as any, numTriangles * 2);
-  dx.set(by as any, numTriangles * 3);
-  dx.set(cx as any, numTriangles * 4);
-  dx.set(cy as any, numTriangles * 5);
+  dx.set(x as any, 0);
+  dx.set(y as any, numTriangles);
+  dx.set(theta as any, numTriangles * 2);
 
   return z;
 };
 
-const init = (seed: string): Triangle[] => {
+interface Triangles {
+  x: Float64Array;
+  y: Float64Array;
+  theta: Float64Array;
+}
+
+const init = (
+  seed: string,
+): { x: Float64Array; y: Float64Array; theta: Float64Array } => {
   const rng = seedrandom(seed);
-  const triangles: Triangle[] = [];
+  const x = new Float64Array(numTriangles);
+  const y = new Float64Array(numTriangles);
+  const theta = new Float64Array(numTriangles);
   for (let i = 0; i < numTriangles; ++i) {
-    const a = [rng() * size, rng() * size];
-    const b = [rng() * size, rng() * size];
-    const c = [rng() * size, rng() * size];
-    triangles.push({ a, b, c });
+    x[i] = size * rng();
+    y[i] = size * rng();
+    theta[i] = 2 * Math.PI * rng();
   }
-  return triangles;
+  return { x, y, theta };
 };
 
-const serialize = (triangles: Triangle[]): Float64Array => {
-  const x = new Float64Array(numTriangles * 6);
+const serialize = ({ x, y, theta }: Triangles): Float64Array => {
+  const xs = new Float64Array(numTriangles * 6);
   for (let i = 0; i < numTriangles; ++i) {
-    const { a, b, c } = triangles[i];
-    x[i] = a[0];
-    x[i + numTriangles] = a[1];
-    x[i + numTriangles * 2] = b[0];
-    x[i + numTriangles * 3] = b[1];
-    x[i + numTriangles * 4] = c[0];
-    x[i + numTriangles * 5] = c[1];
+    xs[i] = x[i];
+    xs[i + numTriangles] = y[i];
+    xs[i + numTriangles * 2] = theta[i];
   }
-  return x;
+  return xs;
 };
 
-const deserialize = (x: Float64Array): Triangle[] => {
-  const triangles: Triangle[] = [];
+const deserialize = (xs: Float64Array): Triangles => {
+  const x = new Float64Array(numTriangles);
+  const y = new Float64Array(numTriangles);
+  const theta = new Float64Array(numTriangles);
   for (let i = 0; i < numTriangles; ++i) {
-    const a = [x[i], x[i + numTriangles]];
-    const b = [x[i + numTriangles * 2], x[i + numTriangles * 3]];
-    const c = [x[i + numTriangles * 4], x[i + numTriangles * 5]];
-    triangles.push({ a, b, c });
+    x[i] = xs[i];
+    y[i] = xs[i + numTriangles];
+    theta[i] = xs[i + numTriangles * 2];
   }
-  return triangles;
+  return { x, y, theta };
 };
 
-const optimize = (triangles: Triangle[]): Triangle[] => {
-  const x = serialize(triangles);
-  let params = optimizer.start(numTriangles * 6);
-  while (params.optStatus !== "EPConverged")
-    params = optimizer.stepUntil(grad, x, params, () => false);
-  return deserialize(x);
+const optimize = (triangles: Triangles): Triangles => {
+  const cfg: lbfgs.Config = {
+    m: 17,
+    armijo: 0.001,
+    wolfe: 0.9,
+    minInterval: 1e-9,
+    maxSteps: 10,
+    epsd: 1e-11,
+  };
+  const xs = serialize(triangles);
+  const state = lbfgs.firstStep(cfg, grad, xs);
+  lbfgs.stepUntil(cfg, grad, xs, state, (info) => {
+    console.log(info.fx);
+    if (info.fx === 0) return true;
+  });
+  return deserialize(xs);
 };
+
+const materializeFn = await compile(materialize);
 
 const hueFactor = 360 / numTriangles;
 
-const svg = (triangles: Triangle[]): string => {
+const svg = ({ x, y, theta }: Triangles): string => {
+  const triangles = materializeFn({
+    x: x as any,
+    y: y as any,
+    theta: theta as any,
+  });
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">`,
   ];
   for (let i = 0; i < numTriangles; ++i) {
-    const { a, b, c } = triangles[i];
+    const { ax, ay, bx, by, cx, cy } = triangles[i];
     const hue = i * hueFactor;
-    lines.push(
-      `  <polygon points="${a} ${b} ${c}" fill="hsl(${hue} 50% 50%)" />`,
-    );
+    const points = `${ax},${ay} ${bx},${by} ${cx},${cy}`;
+    lines.push(`  <polygon points="${points}" fill="hsl(${hue} 50% 50%)" />`);
   }
   lines.push("</svg>", "");
   return lines.join("\n");
