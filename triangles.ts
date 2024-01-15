@@ -161,6 +161,8 @@ const sum = fn([Vec(numTriangles, Real)], Real, (xs) =>
   vjp(fanout)(0).grad(xs),
 );
 
+const size = 100;
+
 const lagrangian = fn(
   [
     {
@@ -186,7 +188,7 @@ const lagrangian = fn(
         const ca = norm(vsub(a, c));
 
         return add(
-          sqr(sub(area(ab, bc, ca), 0.01)),
+          sqr(sub(area(ab, bc, ca), (size / 10) ** 2)),
           add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
         );
       }),
@@ -198,7 +200,7 @@ const lagrangian = fn(
           [bx[i], by[i]],
           [cx[i], cy[i]],
         ]
-          .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(1, x))))))
+          .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(size, x))))))
           .reduce(add);
       }),
     );
@@ -298,9 +300,9 @@ const init = (seed: string): Triangle[] => {
   const rng = seedrandom(seed);
   const triangles: Triangle[] = [];
   for (let i = 0; i < numTriangles; ++i) {
-    const a = [rng(), rng()];
-    const b = [rng(), rng()];
-    const c = [rng(), rng()];
+    const a = [rng() * size, rng() * size];
+    const b = [rng() * size, rng() * size];
+    const c = [rng() * size, rng() * size];
     triangles.push({ a, b, c });
   }
   return triangles;
@@ -342,7 +344,9 @@ const optimize = (triangles: Triangle[]): Triangle[] => {
 const hueFactor = 360 / numTriangles;
 
 const svg = (triangles: Triangle[]): string => {
-  const lines = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1">'];
+  const lines = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">`,
+  ];
   for (let i = 0; i < numTriangles; ++i) {
     const { a, b, c } = triangles[i];
     const hue = i * hueFactor;
