@@ -14,6 +14,7 @@ import {
   gt,
   iadd,
   ieq,
+  ileq,
   ilt,
   leq,
   lt,
@@ -174,59 +175,66 @@ const lagrangian = fn(
   ],
   Real,
   ({ ax, ay, bx, by, cx, cy, weight }) => {
-    return add(
-      sum(
-        vec(numTriangles, Real, (i) => {
-          const a = [ax[i], ay[i]];
-          const b = [bx[i], by[i]];
-          const c = [cx[i], cy[i]];
+    const equilateral = sum(
+      vec(numTriangles, Real, (i) => {
+        const a = [ax[i], ay[i]];
+        const b = [bx[i], by[i]];
+        const c = [cx[i], cy[i]];
 
-          const ab = norm(vsub(b, a));
-          const bc = norm(vsub(c, b));
-          const ca = norm(vsub(a, c));
+        const ab = norm(vsub(b, a));
+        const bc = norm(vsub(c, b));
+        const ca = norm(vsub(a, c));
 
-          return add(
-            sqr(sub(area(ab, bc, ca), 0.01)),
-            add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
-          );
-        }),
-      ),
-      mul(
-        weight,
-        sum(
-          vec(numTriangles, Real, (i) => {
-            const a1 = [ax[i], ay[i]];
-            const b1 = [bx[i], by[i]];
-            const c1 = [cx[i], cy[i]];
-            const p = select(
+        return add(
+          sqr(sub(area(ab, bc, ca), 0.01)),
+          add(add(sqr(sub(ab, bc)), sqr(sub(bc, ca))), sqr(sub(ca, ab))),
+        );
+      }),
+    );
+    const canvas = sum(
+      vec(numTriangles, Real, (i) => {
+        return [
+          [ax[i], ay[i]],
+          [bx[i], by[i]],
+          [cx[i], cy[i]],
+        ]
+          .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(1, x))))))
+          .reduce(add);
+      }),
+    );
+    const disjoint = sum(
+      vec(numTriangles, Real, (i) => {
+        const a1 = [ax[i], ay[i]];
+        const b1 = [bx[i], by[i]];
+        const c1 = [cx[i], cy[i]];
+        const p = select(
+          clockwise(a1, b1, c1),
+          Vec(3, Vec(2, Real)),
+          [c1, b1, a1],
+          [a1, b1, c1],
+        );
+        return sum(
+          vec(numTriangles, Real, (j) => {
+            const a2 = [neg(ax[j]), neg(ay[j])];
+            const b2 = [neg(bx[j]), neg(by[j])];
+            const c2 = [neg(cx[j]), neg(cy[j])];
+            const q = select(
               clockwise(a1, b1, c1),
               Vec(3, Vec(2, Real)),
-              [c1, b1, a1],
-              [a1, b1, c1],
+              [c2, b2, a2],
+              [a2, b2, c2],
             );
-            return sum(
-              vec(numTriangles, Real, (j) => {
-                const a2 = [neg(ax[j]), neg(ay[j])];
-                const b2 = [neg(bx[j]), neg(by[j])];
-                const c2 = [neg(cx[j]), neg(cy[j])];
-                const q = select(
-                  clockwise(a1, b1, c1),
-                  Vec(3, Vec(2, Real)),
-                  [c2, b2, a2],
-                  [a2, b2, c2],
-                );
-                return select(
-                  ieq(numTriangles, i, j),
-                  Real,
-                  0,
-                  sqr(max(0, neg(sdPolygon(minkowskiSum(p, q), [0, 0])))),
-                );
-              }),
+            return select(
+              ileq(numTriangles, i, j),
+              Real,
+              0,
+              sqr(max(0, neg(sdPolygon(minkowskiSum(p, q), [0, 0])))),
             );
           }),
-        ),
-      ),
+        );
+      }),
     );
+    return add(equilateral, mul(weight, add(canvas, disjoint)));
   },
 );
 
