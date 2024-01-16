@@ -100,10 +100,7 @@ const reorder = fn([Vec(3, Vec(2, Real))], Vec(5, Vec(2, Real)), (p) => {
 });
 
 // note: only works on triangles
-const minkowskiSum = (
-  left: Vec<Vec<Real>>,
-  right: Vec<Vec<Real>>,
-): Real[][] => {
+const minkowskiSum = (left: Real[][], right: Real[][]): Real[][] => {
   const p = reorder(left);
   const q = reorder(right);
   const r: Real[][] = [];
@@ -143,12 +140,6 @@ const sdPolygon = (v: Real[][], p: Real[]): Real => {
   }
   return mul(s, sqrt(d));
 };
-
-const clockwise = (a: Real[], b: Real[], c: Real[]): Bool =>
-  lt(
-    mul(sub(b[0], a[0]), sub(c[1], a[1])),
-    mul(sub(c[0], a[0]), sub(b[1], a[1])),
-  );
 
 const size = 100;
 const numTriangles = 100;
@@ -221,24 +212,14 @@ const lagrangian = fn(
         const a1 = [ax, ay];
         const b1 = [bx, by];
         const c1 = [cx, cy];
-        const p = select(
-          clockwise(a1, b1, c1),
-          Vec(3, Vec(2, Real)),
-          [c1, b1, a1],
-          [a1, b1, c1],
-        );
+        const p = [a1, b1, c1];
         return sum(
           vec(numTriangles, Real, (j) => {
             ({ ax, ay, bx, by, cx, cy } = triangles[j]);
             const a2 = [neg(ax), neg(ay)];
             const b2 = [neg(bx), neg(by)];
             const c2 = [neg(cx), neg(cy)];
-            const q = select(
-              clockwise(a1, b1, c1),
-              Vec(3, Vec(2, Real)),
-              [c2, b2, a2],
-              [a2, b2, c2],
-            );
+            const q = [a2, b2, c2];
             return select(
               ileq(numTriangles, i, j),
               Real,
