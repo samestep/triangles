@@ -248,5 +248,5 @@ await run({
       q.map(([x, y]) => [neg(x), neg(y)]),
       0,
     ),
-  out: "out/approx.svg",
+  name: "approx",
 });

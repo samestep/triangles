@@ -8,6 +8,7 @@
     "seedrandom": "^3"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2",
     "@types/bun": "^1",
     "@types/seedrandom": "^3",
     "bun-types": "^1",

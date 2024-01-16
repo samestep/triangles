@@ -1,3 +1,4 @@
+import { Resvg } from "@resvg/resvg-js";
 import * as fs from "fs/promises";
 import * as path from "path";
 import {
@@ -363,7 +364,7 @@ const svg = ({ x, y, theta }: Triangles): string => {
   ];
   for (let i = 0; i < numTriangles; ++i) {
     const { ax, ay, bx, by, cx, cy } = triangles[i];
-    const hue = i * hueFactor;
+    const hue = Math.round(i * hueFactor);
     const points = `${ax},${ay} ${bx},${by} ${cx},${cy}`;
     lines.push(`  <polygon points="${points}" fill="hsl(${hue} 50% 50%)" />`);
   }
@@ -371,15 +372,22 @@ const svg = ({ x, y, theta }: Triangles): string => {
   return lines.join("\n");
 };
 
+const out = "out";
+
 export interface Options {
   minkowski: Minkowski;
-  out: string;
+  name: string;
 }
 
 export const run = async (opts: Options): Promise<void> => {
   const f = await build(opts.minkowski);
   const original = init("");
   const optimized = optimize(f, original);
-  await fs.mkdir(path.dirname(opts.out), { recursive: true });
-  await fs.writeFile(opts.out, svg(optimized));
+  const vector = svg(optimized);
+  const raster = new Resvg(vector, { fitTo: { mode: "width", value: 1000 } })
+    .render()
+    .asPng();
+  await fs.mkdir(out, { recursive: true });
+  await fs.writeFile(path.join(out, `${opts.name}.svg`), vector);
+  await fs.writeFile(path.join(out, `${opts.name}.png`), raster);
 };
