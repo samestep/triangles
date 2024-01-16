@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 import {
   Bool,
   Dual,
@@ -141,6 +139,17 @@ const sdPolygon = (v: Real[][], p: Real[]): Real => {
   return mul(s, sqrt(d));
 };
 
+export type Minkowski = (p: Real[][], q: Real[][]) => Real;
+
+export const exact: Minkowski = (p, q) =>
+  sdPolygon(
+    minkowskiSum(
+      p,
+      q.map(([x, y]) => [neg(x), neg(y)]),
+    ),
+    [0, 0],
+  );
+
 const size = 100;
 const numTriangles = 100;
 const side = 12;
@@ -183,59 +192,8 @@ const materialize = fn(
     }),
 );
 
-const lagrangian = fn(
-  [
-    {
-      x: Vec(numTriangles, Real),
-      y: Vec(numTriangles, Real),
-      theta: Vec(numTriangles, Real),
-    },
-  ],
-  Real,
-  ({ x, y, theta }) => {
-    const triangles = materialize({ x, y, theta });
-    const canvas = sum(
-      vec(numTriangles, Real, (i) => {
-        const { ax, ay, bx, by, cx, cy } = triangles[i];
-        return [
-          [ax, ay],
-          [bx, by],
-          [cx, cy],
-        ]
-          .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(size, x))))))
-          .reduce(add);
-      }),
-    );
-    const disjoint = sum(
-      vec(numTriangles, Real, (i) => {
-        let { ax, ay, bx, by, cx, cy } = triangles[i];
-        const a1 = [ax, ay];
-        const b1 = [bx, by];
-        const c1 = [cx, cy];
-        const p = [a1, b1, c1];
-        return sum(
-          vec(numTriangles, Real, (j) => {
-            ({ ax, ay, bx, by, cx, cy } = triangles[j]);
-            const a2 = [neg(ax), neg(ay)];
-            const b2 = [neg(bx), neg(by)];
-            const c2 = [neg(cx), neg(cy)];
-            const q = [a2, b2, c2];
-            return select(
-              ileq(numTriangles, i, j),
-              Real,
-              0,
-              sqr(max(0, neg(sdPolygon(minkowskiSum(p, q), [0, 0])))),
-            );
-          }),
-        );
-      }),
-    );
-    return add(canvas, disjoint);
-  },
-);
-
-const compiled = await compile(
-  fn(
+const build = async (minkowski: Minkowski): Promise<lbfgs.Fn> => {
+  const lagrangian = fn(
     [
       {
         x: Vec(numTriangles, Real),
@@ -243,33 +201,86 @@ const compiled = await compile(
         theta: Vec(numTriangles, Real),
       },
     ],
-    {
-      z: Real,
-      x: Vec(numTriangles, Real),
-      y: Vec(numTriangles, Real),
-      theta: Vec(numTriangles, Real),
+    Real,
+    ({ x, y, theta }) => {
+      const triangles = materialize({ x, y, theta });
+      const canvas = sum(
+        vec(numTriangles, Real, (i) => {
+          const { ax, ay, bx, by, cx, cy } = triangles[i];
+          return [
+            [ax, ay],
+            [bx, by],
+            [cx, cy],
+          ]
+            .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(size, x))))))
+            .reduce(add);
+        }),
+      );
+      const disjoint = sum(
+        vec(numTriangles, Real, (i) => {
+          let { ax, ay, bx, by, cx, cy } = triangles[i];
+          const a1 = [ax, ay];
+          const b1 = [bx, by];
+          const c1 = [cx, cy];
+          const p = [a1, b1, c1];
+          return sum(
+            vec(numTriangles, Real, (j) => {
+              ({ ax, ay, bx, by, cx, cy } = triangles[j]);
+              const a2 = [neg(ax), neg(ay)];
+              const b2 = [neg(bx), neg(by)];
+              const c2 = [neg(cx), neg(cy)];
+              const q = [a2, b2, c2];
+              return select(
+                ileq(numTriangles, i, j),
+                Real,
+                0,
+                sqr(max(0, neg(minkowski(p, q)))),
+              );
+            }),
+          );
+        }),
+      );
+      return add(canvas, disjoint);
     },
-    (inputs) => {
-      const { ret, grad } = vjp(lagrangian)(inputs);
-      const { x, y, theta } = grad(1);
-      return { z: ret, x, y, theta };
-    },
-  ),
-);
+  );
 
-const grad: lbfgs.Fn = (xs: Float64Array, dx: Float64Array): number => {
-  const { z, x, y, theta } = compiled({
-    x: xs.subarray(0, numTriangles) as any,
-    y: xs.subarray(numTriangles, numTriangles * 2) as any,
-    theta: xs.subarray(numTriangles * 2, numTriangles * 3) as any,
-  });
+  const compiled = await compile(
+    fn(
+      [
+        {
+          x: Vec(numTriangles, Real),
+          y: Vec(numTriangles, Real),
+          theta: Vec(numTriangles, Real),
+        },
+      ],
+      {
+        z: Real,
+        x: Vec(numTriangles, Real),
+        y: Vec(numTriangles, Real),
+        theta: Vec(numTriangles, Real),
+      },
+      (inputs) => {
+        const { ret, grad } = vjp(lagrangian)(inputs);
+        const { x, y, theta } = grad(1);
+        return { z: ret, x, y, theta };
+      },
+    ),
+  );
 
-  // https://github.com/rose-lang/rose/issues/111
-  dx.set(x as any, 0);
-  dx.set(y as any, numTriangles);
-  dx.set(theta as any, numTriangles * 2);
+  return (xs: Float64Array, dx: Float64Array): number => {
+    const { z, x, y, theta } = compiled({
+      x: xs.subarray(0, numTriangles) as any,
+      y: xs.subarray(numTriangles, numTriangles * 2) as any,
+      theta: xs.subarray(numTriangles * 2, numTriangles * 3) as any,
+    });
 
-  return z;
+    // https://github.com/rose-lang/rose/issues/111
+    dx.set(x as any, 0);
+    dx.set(y as any, numTriangles);
+    dx.set(theta as any, numTriangles * 2);
+
+    return z;
+  };
 };
 
 interface Triangles {
@@ -315,7 +326,7 @@ const deserialize = (xs: Float64Array): Triangles => {
   return { x, y, theta };
 };
 
-const optimize = (triangles: Triangles): Triangles => {
+const optimize = (f: lbfgs.Fn, triangles: Triangles): Triangles => {
   const cfg: lbfgs.Config = {
     m: 17,
     armijo: 0.001,
@@ -325,8 +336,8 @@ const optimize = (triangles: Triangles): Triangles => {
     epsd: 1e-11,
   };
   const xs = serialize(triangles);
-  const state = lbfgs.firstStep(cfg, grad, xs);
-  lbfgs.stepUntil(cfg, grad, xs, state, (info) => {
+  const state = lbfgs.firstStep(cfg, f, xs);
+  lbfgs.stepUntil(cfg, f, xs, state, (info) => {
     console.log(info.fx);
     if (info.fx === 0) return true;
   });
@@ -356,10 +367,14 @@ const svg = ({ x, y, theta }: Triangles): string => {
   return lines.join("\n");
 };
 
-const main = () => {
-  const original = init("");
-  const optimized = optimize(original);
-  Bun.write("out/triangles.svg", svg(optimized));
-};
+export interface Options {
+  minkowski: Minkowski;
+  out: string;
+}
 
-main();
+export const run = async (opts: Options): Promise<void> => {
+  const f = await build(opts.minkowski);
+  const original = init("");
+  const optimized = optimize(f, original);
+  Bun.write(opts.out, svg(optimized));
+};
