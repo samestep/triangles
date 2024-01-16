@@ -226,9 +226,9 @@ const build = async (minkowski: Minkowski): Promise<lbfgs.Fn> => {
           return sum(
             vec(numTriangles, Real, (j) => {
               ({ ax, ay, bx, by, cx, cy } = triangles[j]);
-              const a2 = [neg(ax), neg(ay)];
-              const b2 = [neg(bx), neg(by)];
-              const c2 = [neg(cx), neg(cy)];
+              const a2 = [ax, ay];
+              const b2 = [bx, by];
+              const c2 = [cx, cy];
               const q = [a2, b2, c2];
               return select(
                 ileq(numTriangles, i, j),

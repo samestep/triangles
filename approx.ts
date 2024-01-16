@@ -242,6 +242,11 @@ const convexPolygonMinkowskiSDF = (
 };
 
 await run({
-  minkowski: (p, q) => convexPolygonMinkowskiSDF(p, q, 0),
+  minkowski: (p, q) =>
+    convexPolygonMinkowskiSDF(
+      p,
+      q.map(([x, y]) => [neg(x), neg(y)]),
+      0,
+    ),
   out: "out/approx.svg",
 });
