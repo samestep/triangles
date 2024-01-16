@@ -15,6 +15,7 @@
     "prettier-plugin-organize-imports": "^3"
   },
   "scripts": {
-    "check": "bunx --bun prettier . --check"
+    "check": "bunx --bun prettier . --check",
+    "build": "bunx tsc"
   }
 }

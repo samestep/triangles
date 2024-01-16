@@ -1,3 +1,5 @@
+import * as fs from "fs/promises";
+import * as path from "path";
 import {
   Bool,
   Dual,
@@ -378,5 +380,6 @@ export const run = async (opts: Options): Promise<void> => {
   const f = await build(opts.minkowski);
   const original = init("");
   const optimized = optimize(f, original);
-  Bun.write(opts.out, svg(optimized));
+  await fs.mkdir(path.dirname(opts.out), { recursive: true });
+  await fs.writeFile(opts.out, svg(optimized));
 };

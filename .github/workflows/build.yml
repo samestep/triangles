@@ -13,8 +13,9 @@ jobs:
       - uses: oven-sh/setup-bun@v1
       - run: bun install
       - run: bun run check
-      - run: bun exact.ts
-      - run: bun approx.ts
+      - run: bun run build
+      - run: node dist/exact.js
+      - run: node dist/approx.js
       - uses: actions/upload-artifact@v4
         with:
           path: out
