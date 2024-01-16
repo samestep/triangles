@@ -337,9 +337,11 @@ const optimize = (f: lbfgs.Fn, triangles: Triangles): Triangles => {
   };
   const xs = serialize(triangles);
   const state = lbfgs.firstStep(cfg, f, xs);
+  let fx: number;
   lbfgs.stepUntil(cfg, f, xs, state, (info) => {
+    if (info.fx === fx) return true;
     console.log(info.fx);
-    if (info.fx === 0) return true;
+    fx = info.fx;
   });
   return deserialize(xs);
 };
