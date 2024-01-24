@@ -241,9 +241,11 @@ const convexPolygonMinkowskiSDF = (
   );
 };
 
-const m = 3;
 await run({
-  m,
+  m: 3,
+  r: 12 / Math.sqrt(3),
+  n: 100,
+  seed: "",
   minkowski: (p, q) =>
     convexPolygonMinkowskiSDF(
       p,

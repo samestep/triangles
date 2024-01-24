@@ -147,14 +147,6 @@ export const exact = (m: number): Minkowski => {
 };
 
 const size = 100;
-const numPolys = 100;
-const radius = 12 / Math.sqrt(3);
-
-const fanout = fn([Real], Vec(numPolys, Real), (x) =>
-  vec(numPolys, Real, () => x),
-);
-
-const sum = fn([Vec(numPolys, Real)], Real, (xs) => vjp(fanout)(0).grad(xs));
 
 type Materialize = (stuff: {
   x: number[];
@@ -163,29 +155,34 @@ type Materialize = (stuff: {
 }) => number[][][];
 
 const build = async (
-  m: number,
-  minkowski: Minkowski,
+  opts: Options,
 ): Promise<{
   render: Materialize;
   grad: lbfgs.Fn;
 }> => {
+  const fanout = fn([Real], Vec(opts.n, Real), (x) =>
+    vec(opts.n, Real, () => x),
+  );
+
+  const sum = fn([Vec(opts.n, Real)], Real, (xs) => vjp(fanout)(0).grad(xs));
+
   const materialize = fn(
     [
       {
-        x: Vec(numPolys, Real),
-        y: Vec(numPolys, Real),
-        theta: Vec(numPolys, Real),
+        x: Vec(opts.n, Real),
+        y: Vec(opts.n, Real),
+        theta: Vec(opts.n, Real),
       },
     ],
-    Vec(numPolys, Vec(m, Vec(2, Real))),
+    Vec(opts.n, Vec(opts.m, Vec(2, Real))),
     ({ x, y, theta }) =>
-      vec(numPolys, Vec(m, Vec(2, Real)), (i) => {
+      vec(opts.n, Vec(opts.m, Vec(2, Real)), (i) => {
         const points = [];
-        for (let j = 0; j < m; ++j) {
-          const angle = add(theta[i], mul(j, div(2 * Math.PI, m)));
+        for (let j = 0; j < opts.m; ++j) {
+          const angle = add(theta[i], mul(j, div(2 * Math.PI, opts.m)));
           points.push([
-            add(x[i], mul(radius, cos(angle))),
-            add(y[i], mul(radius, sin(angle))),
+            add(x[i], mul(opts.r, cos(angle))),
+            add(y[i], mul(opts.r, sin(angle))),
           ]);
         }
         return points;
@@ -195,19 +192,19 @@ const build = async (
   const lagrangian = fn(
     [
       {
-        x: Vec(numPolys, Real),
-        y: Vec(numPolys, Real),
-        theta: Vec(numPolys, Real),
+        x: Vec(opts.n, Real),
+        y: Vec(opts.n, Real),
+        theta: Vec(opts.n, Real),
       },
     ],
     Real,
     ({ x, y, theta }) => {
       const polys = materialize({ x, y, theta });
       const canvas = sum(
-        vec(numPolys, Real, (i) => {
+        vec(opts.n, Real, (i) => {
           const points = polys[i];
           let total: Real = 0;
-          for (let j = 0; j < m; ++j) {
+          for (let j = 0; j < opts.m; ++j) {
             const [x, y] = points[j];
             total = add(total, sqr(min(0, min(x, sub(size, x)))));
             total = add(total, sqr(min(0, min(y, sub(size, y)))));
@@ -216,26 +213,26 @@ const build = async (
         }),
       );
       const disjoint = sum(
-        vec(numPolys, Real, (i) => {
+        vec(opts.n, Real, (i) => {
           const poly1 = polys[i];
           const p: Real[][] = [];
-          for (let k = 0; k < m; ++k) {
+          for (let k = 0; k < opts.m; ++k) {
             const [x, y] = poly1[k];
             p.push([x, y]);
           }
           return sum(
-            vec(numPolys, Real, (j) => {
+            vec(opts.n, Real, (j) => {
               const poly2 = polys[j];
               const q: Real[][] = [];
-              for (let k = 0; k < m; ++k) {
+              for (let k = 0; k < opts.m; ++k) {
                 const [x, y] = poly2[k];
                 q.push([x, y]);
               }
               return select(
-                ileq(numPolys, i, j),
+                ileq(opts.n, i, j),
                 Real,
                 0,
-                sqr(max(0, neg(minkowski(p, q)))),
+                sqr(max(0, neg(opts.minkowski(p, q)))),
               );
             }),
           );
@@ -249,16 +246,16 @@ const build = async (
     fn(
       [
         {
-          x: Vec(numPolys, Real),
-          y: Vec(numPolys, Real),
-          theta: Vec(numPolys, Real),
+          x: Vec(opts.n, Real),
+          y: Vec(opts.n, Real),
+          theta: Vec(opts.n, Real),
         },
       ],
       {
         z: Real,
-        x: Vec(numPolys, Real),
-        y: Vec(numPolys, Real),
-        theta: Vec(numPolys, Real),
+        x: Vec(opts.n, Real),
+        y: Vec(opts.n, Real),
+        theta: Vec(opts.n, Real),
       },
       (inputs) => {
         const { ret, grad } = vjp(lagrangian)(inputs);
@@ -272,15 +269,15 @@ const build = async (
     render: (await compile(materialize)) as any,
     grad: (xs: Float64Array, dx: Float64Array): number => {
       const { z, x, y, theta } = compiled({
-        x: xs.subarray(0, numPolys) as any,
-        y: xs.subarray(numPolys, numPolys * 2) as any,
-        theta: xs.subarray(numPolys * 2, numPolys * 3) as any,
+        x: xs.subarray(0, opts.n) as any,
+        y: xs.subarray(opts.n, opts.n * 2) as any,
+        theta: xs.subarray(opts.n * 2, opts.n * 3) as any,
       });
 
       // https://github.com/rose-lang/rose/issues/111
       dx.set(x as any, 0);
-      dx.set(y as any, numPolys);
-      dx.set(theta as any, numPolys * 2);
+      dx.set(y as any, opts.n);
+      dx.set(theta as any, opts.n * 2);
 
       return z;
     },
@@ -294,13 +291,13 @@ interface Polys {
 }
 
 const init = (
-  seed: string,
+  opts: Options,
 ): { x: Float64Array; y: Float64Array; theta: Float64Array } => {
-  const rng = seedrandom(seed);
-  const x = new Float64Array(numPolys);
-  const y = new Float64Array(numPolys);
-  const theta = new Float64Array(numPolys);
-  for (let i = 0; i < numPolys; ++i) {
+  const rng = seedrandom(opts.seed);
+  const x = new Float64Array(opts.n);
+  const y = new Float64Array(opts.n);
+  const theta = new Float64Array(opts.n);
+  for (let i = 0; i < opts.n; ++i) {
     x[i] = size * rng();
     y[i] = size * rng();
     theta[i] = 2 * Math.PI * rng();
@@ -308,29 +305,29 @@ const init = (
   return { x, y, theta };
 };
 
-const serialize = ({ x, y, theta }: Polys): Float64Array => {
-  const xs = new Float64Array(numPolys * 6);
-  for (let i = 0; i < numPolys; ++i) {
+const serialize = (opts: Options, { x, y, theta }: Polys): Float64Array => {
+  const xs = new Float64Array(opts.n * 6);
+  for (let i = 0; i < opts.n; ++i) {
     xs[i] = x[i];
-    xs[i + numPolys] = y[i];
-    xs[i + numPolys * 2] = theta[i];
+    xs[i + opts.n] = y[i];
+    xs[i + opts.n * 2] = theta[i];
   }
   return xs;
 };
 
-const deserialize = (xs: Float64Array): Polys => {
-  const x = new Float64Array(numPolys);
-  const y = new Float64Array(numPolys);
-  const theta = new Float64Array(numPolys);
-  for (let i = 0; i < numPolys; ++i) {
+const deserialize = (opts: Options, xs: Float64Array): Polys => {
+  const x = new Float64Array(opts.n);
+  const y = new Float64Array(opts.n);
+  const theta = new Float64Array(opts.n);
+  for (let i = 0; i < opts.n; ++i) {
     x[i] = xs[i];
-    y[i] = xs[i + numPolys];
-    theta[i] = xs[i + numPolys * 2];
+    y[i] = xs[i + opts.n];
+    theta[i] = xs[i + opts.n * 2];
   }
   return { x, y, theta };
 };
 
-const optimize = (f: lbfgs.Fn, polys: Polys): Polys => {
+const optimize = (opts: Options, f: lbfgs.Fn, polys: Polys): Polys => {
   const cfg: lbfgs.Config = {
     m: 17,
     armijo: 0.001,
@@ -339,7 +336,7 @@ const optimize = (f: lbfgs.Fn, polys: Polys): Polys => {
     maxSteps: 10,
     epsd: 1e-11,
   };
-  const xs = serialize(polys);
+  const xs = serialize(opts, polys);
   const state = lbfgs.firstStep(cfg, f, xs);
   let fx: number;
   lbfgs.stepUntil(cfg, f, xs, state, (info) => {
@@ -347,12 +344,15 @@ const optimize = (f: lbfgs.Fn, polys: Polys): Polys => {
     console.log(info.fx);
     fx = info.fx;
   });
-  return deserialize(xs);
+  return deserialize(opts, xs);
 };
 
-const hueFactor = 360 / numPolys;
-
-const svg = (materialize: Materialize, { x, y, theta }: Polys): string => {
+const svg = (
+  opts: Options,
+  materialize: Materialize,
+  { x, y, theta }: Polys,
+): string => {
+  const hueFactor = 360 / opts.n;
   const polys = materialize({
     x: x as any,
     y: y as any,
@@ -361,7 +361,7 @@ const svg = (materialize: Materialize, { x, y, theta }: Polys): string => {
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">`,
   ];
-  for (let i = 0; i < numPolys; ++i) {
+  for (let i = 0; i < opts.n; ++i) {
     const poly = polys[i];
     const hue = Math.round(i * hueFactor);
     const points = poly.map(([x, y]) => `${x},${y}`).join(" ");
@@ -375,15 +375,18 @@ const out = "out";
 
 export interface Options {
   m: number;
+  r: number;
+  n: number;
+  seed: string;
   minkowski: Minkowski;
   name: string;
 }
 
 export const run = async (opts: Options): Promise<void> => {
-  const { render, grad: f } = await build(opts.m, opts.minkowski);
-  const original = init("");
-  const optimized = optimize(f, original);
-  const vector = svg(render, optimized);
+  const { render, grad: f } = await build(opts);
+  const original = init(opts);
+  const optimized = optimize(opts, f, original);
+  const vector = svg(opts, render, optimized);
   const raster = new Resvg(vector, { fitTo: { mode: "width", value: 1000 } })
     .render()
     .asPng();
