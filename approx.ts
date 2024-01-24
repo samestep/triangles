@@ -28,6 +28,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+import * as fs from "fs/promises";
 import {
   Dual,
   Real,
@@ -43,6 +44,7 @@ import {
   sub,
 } from "rose";
 import { run } from "./common.js";
+import { mMax, n, r, seed } from "./config.js";
 
 const epsilon = 1e-5;
 const EPS_DENOM = epsilon; // Avoid divide-by-zero in denominator
@@ -241,16 +243,20 @@ const convexPolygonMinkowskiSDF = (
   );
 };
 
-await run({
-  m: 3,
-  r: 12 / Math.sqrt(3),
-  n: 100,
-  seed: "",
-  minkowski: (p, q) =>
-    convexPolygonMinkowskiSDF(
-      p,
-      q.map(([x, y]) => [neg(x), neg(y)]),
-      0,
-    ),
-  name: "approx",
-});
+const name = "approx";
+for (let m = 3; m < mMax; ++m) {
+  const millis = await run({
+    m,
+    r,
+    n,
+    seed,
+    minkowski: (p, q) =>
+      convexPolygonMinkowskiSDF(
+        p,
+        q.map(([x, y]) => [neg(x), neg(y)]),
+        0,
+      ),
+    name,
+  });
+  await fs.appendFile(`${name}.csv`, `${name},${m},${r},${n},${millis}\n`);
+}

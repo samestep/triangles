@@ -327,6 +327,13 @@ const deserialize = (opts: Options, xs: Float64Array): Polys => {
   return { x, y, theta };
 };
 
+// https://stackoverflow.com/a/43122214
+function bitCount(n: number) {
+  n = n - ((n >> 1) & 0x55555555);
+  n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
+  return (((n + (n >> 4)) & 0xf0f0f0f) * 0x1010101) >> 24;
+}
+
 const optimize = (opts: Options, f: lbfgs.Fn, polys: Polys): Polys => {
   const cfg: lbfgs.Config = {
     m: 17,
@@ -339,10 +346,12 @@ const optimize = (opts: Options, f: lbfgs.Fn, polys: Polys): Polys => {
   const xs = serialize(opts, polys);
   const state = lbfgs.firstStep(cfg, f, xs);
   let fx: number;
+  let i = 0;
   lbfgs.stepUntil(cfg, f, xs, state, (info) => {
     if (info.fx === fx) return true;
-    console.log(info.fx);
     fx = info.fx;
+    if (bitCount(i) < 2) console.log(`i = ${i}, fx = ${fx}`);
+    ++i;
   });
   return deserialize(opts, xs);
 };
@@ -382,15 +391,24 @@ export interface Options {
   name: string;
 }
 
-export const run = async (opts: Options): Promise<void> => {
+export const run = async (opts: Options): Promise<number> => {
   const { render, grad: f } = await build(opts);
   const original = init(opts);
+  const start = performance.now();
   const optimized = optimize(opts, f, original);
+  const end = performance.now();
   const vector = svg(opts, render, optimized);
   const raster = new Resvg(vector, { fitTo: { mode: "width", value: 1000 } })
     .render()
     .asPng();
   await fs.mkdir(out, { recursive: true });
-  await fs.writeFile(path.join(out, `${opts.name}.svg`), vector);
-  await fs.writeFile(path.join(out, `${opts.name}.png`), raster);
+  await fs.writeFile(
+    path.join(out, `${opts.name}-${opts.m}-${opts.n}.svg`),
+    vector,
+  );
+  await fs.writeFile(
+    path.join(out, `${opts.name}-${opts.m}-${opts.n}.png`),
+    raster,
+  );
+  return end - start;
 };
