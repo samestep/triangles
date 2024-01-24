@@ -1,3 +1,4 @@
 import { exact, run } from "./common.js";
 
-await run({ minkowski: exact, name: "exact" });
+const m = 3;
+await run({ m, minkowski: exact(m), name: "exact" });

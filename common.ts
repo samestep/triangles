@@ -15,9 +15,9 @@ import {
   geq,
   gt,
   iadd,
-  ieq,
   ileq,
   ilt,
+  imod,
   leq,
   lt,
   mul,
@@ -27,7 +27,6 @@ import {
   or,
   select,
   sqrt,
-  struct,
   sub,
   vec,
   vjp,
@@ -79,49 +78,6 @@ const dot = (a: Real[], b: Real[]): Real =>
 const cross = (a: Real[], b: Real[]): Real =>
   sub(mul(a[0], b[1]), mul(a[1], b[0]));
 
-const reorder = fn([Vec(3, Vec(2, Real))], Vec(5, Vec(2, Real)), (p) => {
-  let i: Nat = 0;
-  for (let j = 1; j < 3; ++j) {
-    const [xi, yi] = p[i] as any;
-    const [xj, yj] = p[j];
-    i = select(or(lt(yj, yi), and(leq(yj, yi), lt(xj, xi))), 3, j, i);
-  }
-  const [a, b, c] = p;
-  return select(
-    ieq(3, i, 0),
-    Vec(5, Vec(2, Real)),
-    [a, b, c, a, b],
-    select(
-      ieq(3, i, 1),
-      Vec(5, Vec(2, Real)),
-      [b, c, a, b, c],
-      [c, a, b, c, a],
-    ),
-  );
-});
-
-// note: only works on triangles
-const minkowskiSum = (left: Real[][], right: Real[][]): Real[][] => {
-  const p = reorder(left);
-  const q = reorder(right);
-  const r: Real[][] = [];
-  let i: Nat = 0;
-  let j: Nat = 0;
-  for (let k = 0; k < 6; ++k) {
-    r.push(vadd(p[i], q[j]));
-    const i1 = iadd(5, i, 1);
-    const j1 = iadd(5, j, 1);
-    const z = cross(vsub(p[i1], p[i]), vsub(q[j1], q[j]));
-    ({ i, j } = select(
-      and(ilt(5, i, 3), geq(z, 0)),
-      { i: 5, j: 5 },
-      { i: i1, j },
-      { i, j: j1 },
-    ));
-  }
-  return r;
-};
-
 // https://iquilezles.org/articles/distfunctions2d/
 const sdPolygon = (v: Real[][], p: Real[]): Real => {
   const N = v.length;
@@ -144,97 +100,139 @@ const sdPolygon = (v: Real[][], p: Real[]): Real => {
 
 export type Minkowski = (p: Real[][], q: Real[][]) => Real;
 
-export const exact: Minkowski = (p, q) =>
-  sdPolygon(
-    minkowskiSum(
-      p,
-      q.map(([x, y]) => [neg(x), neg(y)]),
-    ),
-    [0, 0],
-  );
+export const exact = (m: number): Minkowski => {
+  const reorder = fn([Vec(m, Vec(2, Real))], Vec(m + 2, Vec(2, Real)), (p) => {
+    let i: Nat = 0;
+    for (let j = 1; j < m; ++j) {
+      const [xi, yi] = p[i] as any;
+      const [xj, yj] = p[j];
+      i = select(or(lt(yj, yi), and(leq(yj, yi), lt(xj, xi))), m, j, i);
+    }
+    const q: Vec<Real>[] = [];
+    for (let j = 0; j < m + 2; ++j) {
+      q.push(p[imod(m, iadd(m, i, j))]);
+    }
+    return q;
+  });
+
+  const minkowskiSum = (left: Real[][], right: Real[][]): Real[][] => {
+    const p = reorder(left);
+    const q = reorder(right);
+    const r: Real[][] = [];
+    let i: Nat = 0;
+    let j: Nat = 0;
+    for (let k = 0; k < 2 * m; ++k) {
+      r.push(vadd(p[i], q[j]));
+      const i1 = iadd(m + 2, i, 1);
+      const j1 = iadd(m + 2, j, 1);
+      const z = cross(vsub(p[i1], p[i]), vsub(q[j1], q[j]));
+      ({ i, j } = select(
+        and(ilt(m + 2, i, m), geq(z, 0)),
+        { i: m + 2, j: m + 2 },
+        { i: i1, j },
+        { i, j: j1 },
+      ));
+    }
+    return r;
+  };
+
+  return (p, q) =>
+    sdPolygon(
+      minkowskiSum(
+        p,
+        q.map(([x, y]) => [neg(x), neg(y)]),
+      ),
+      [0, 0],
+    );
+};
 
 const size = 100;
-const numTriangles = 100;
-const side = 12;
+const numPolys = 100;
+const radius = 12 / Math.sqrt(3);
 
-const fanout = fn([Real], Vec(numTriangles, Real), (x) =>
-  vec(numTriangles, Real, () => x),
+const fanout = fn([Real], Vec(numPolys, Real), (x) =>
+  vec(numPolys, Real, () => x),
 );
 
-const sum = fn([Vec(numTriangles, Real)], Real, (xs) =>
-  vjp(fanout)(0).grad(xs),
-);
+const sum = fn([Vec(numPolys, Real)], Real, (xs) => vjp(fanout)(0).grad(xs));
 
-const Triangle = struct({
-  ax: Real,
-  ay: Real,
-  bx: Real,
-  by: Real,
-  cx: Real,
-  cy: Real,
-});
+type Materialize = (stuff: {
+  x: number[];
+  y: number[];
+  theta: number[];
+}) => number[][][];
 
-const materialize = fn(
-  [
-    {
-      x: Vec(numTriangles, Real),
-      y: Vec(numTriangles, Real),
-      theta: Vec(numTriangles, Real),
-    },
-  ],
-  Vec(numTriangles, Triangle),
-  ({ x, y, theta }) =>
-    vec(numTriangles, Triangle, (i) => {
-      const a = [x[i], y[i]];
-      const b = vadd(a, [mul(side, cos(theta[i])), mul(side, sin(theta[i]))]);
-      const c = vadd(a, [
-        mul(side, cos(add(theta[i], Math.PI / 3))),
-        mul(side, sin(add(theta[i], Math.PI / 3))),
-      ]);
-      return { ax: a[0], ay: a[1], bx: b[0], by: b[1], cx: c[0], cy: c[1] };
-    }),
-);
+const build = async (
+  m: number,
+  minkowski: Minkowski,
+): Promise<{
+  render: Materialize;
+  grad: lbfgs.Fn;
+}> => {
+  const materialize = fn(
+    [
+      {
+        x: Vec(numPolys, Real),
+        y: Vec(numPolys, Real),
+        theta: Vec(numPolys, Real),
+      },
+    ],
+    Vec(numPolys, Vec(m, Vec(2, Real))),
+    ({ x, y, theta }) =>
+      vec(numPolys, Vec(m, Vec(2, Real)), (i) => {
+        const points = [];
+        for (let j = 0; j < m; ++j) {
+          const angle = add(theta[i], mul(j, div(2 * Math.PI, m)));
+          points.push([
+            add(x[i], mul(radius, cos(angle))),
+            add(y[i], mul(radius, sin(angle))),
+          ]);
+        }
+        return points;
+      }),
+  );
 
-const build = async (minkowski: Minkowski): Promise<lbfgs.Fn> => {
   const lagrangian = fn(
     [
       {
-        x: Vec(numTriangles, Real),
-        y: Vec(numTriangles, Real),
-        theta: Vec(numTriangles, Real),
+        x: Vec(numPolys, Real),
+        y: Vec(numPolys, Real),
+        theta: Vec(numPolys, Real),
       },
     ],
     Real,
     ({ x, y, theta }) => {
-      const triangles = materialize({ x, y, theta });
+      const polys = materialize({ x, y, theta });
       const canvas = sum(
-        vec(numTriangles, Real, (i) => {
-          const { ax, ay, bx, by, cx, cy } = triangles[i];
-          return [
-            [ax, ay],
-            [bx, by],
-            [cx, cy],
-          ]
-            .flatMap((v) => v.map((x) => sqr(min(0, min(x, sub(size, x))))))
-            .reduce(add);
+        vec(numPolys, Real, (i) => {
+          const points = polys[i];
+          let total: Real = 0;
+          for (let j = 0; j < m; ++j) {
+            const [x, y] = points[j];
+            total = add(total, sqr(min(0, min(x, sub(size, x)))));
+            total = add(total, sqr(min(0, min(y, sub(size, y)))));
+          }
+          return total;
         }),
       );
       const disjoint = sum(
-        vec(numTriangles, Real, (i) => {
-          let { ax, ay, bx, by, cx, cy } = triangles[i];
-          const a1 = [ax, ay];
-          const b1 = [bx, by];
-          const c1 = [cx, cy];
-          const p = [a1, b1, c1];
+        vec(numPolys, Real, (i) => {
+          const poly1 = polys[i];
+          const p: Real[][] = [];
+          for (let k = 0; k < m; ++k) {
+            const [x, y] = poly1[k];
+            p.push([x, y]);
+          }
           return sum(
-            vec(numTriangles, Real, (j) => {
-              ({ ax, ay, bx, by, cx, cy } = triangles[j]);
-              const a2 = [ax, ay];
-              const b2 = [bx, by];
-              const c2 = [cx, cy];
-              const q = [a2, b2, c2];
+            vec(numPolys, Real, (j) => {
+              const poly2 = polys[j];
+              const q: Real[][] = [];
+              for (let k = 0; k < m; ++k) {
+                const [x, y] = poly2[k];
+                q.push([x, y]);
+              }
               return select(
-                ileq(numTriangles, i, j),
+                ileq(numPolys, i, j),
                 Real,
                 0,
                 sqr(max(0, neg(minkowski(p, q)))),
@@ -251,16 +249,16 @@ const build = async (minkowski: Minkowski): Promise<lbfgs.Fn> => {
     fn(
       [
         {
-          x: Vec(numTriangles, Real),
-          y: Vec(numTriangles, Real),
-          theta: Vec(numTriangles, Real),
+          x: Vec(numPolys, Real),
+          y: Vec(numPolys, Real),
+          theta: Vec(numPolys, Real),
         },
       ],
       {
         z: Real,
-        x: Vec(numTriangles, Real),
-        y: Vec(numTriangles, Real),
-        theta: Vec(numTriangles, Real),
+        x: Vec(numPolys, Real),
+        y: Vec(numPolys, Real),
+        theta: Vec(numPolys, Real),
       },
       (inputs) => {
         const { ret, grad } = vjp(lagrangian)(inputs);
@@ -270,23 +268,26 @@ const build = async (minkowski: Minkowski): Promise<lbfgs.Fn> => {
     ),
   );
 
-  return (xs: Float64Array, dx: Float64Array): number => {
-    const { z, x, y, theta } = compiled({
-      x: xs.subarray(0, numTriangles) as any,
-      y: xs.subarray(numTriangles, numTriangles * 2) as any,
-      theta: xs.subarray(numTriangles * 2, numTriangles * 3) as any,
-    });
+  return {
+    render: (await compile(materialize)) as any,
+    grad: (xs: Float64Array, dx: Float64Array): number => {
+      const { z, x, y, theta } = compiled({
+        x: xs.subarray(0, numPolys) as any,
+        y: xs.subarray(numPolys, numPolys * 2) as any,
+        theta: xs.subarray(numPolys * 2, numPolys * 3) as any,
+      });
 
-    // https://github.com/rose-lang/rose/issues/111
-    dx.set(x as any, 0);
-    dx.set(y as any, numTriangles);
-    dx.set(theta as any, numTriangles * 2);
+      // https://github.com/rose-lang/rose/issues/111
+      dx.set(x as any, 0);
+      dx.set(y as any, numPolys);
+      dx.set(theta as any, numPolys * 2);
 
-    return z;
+      return z;
+    },
   };
 };
 
-interface Triangles {
+interface Polys {
   x: Float64Array;
   y: Float64Array;
   theta: Float64Array;
@@ -296,10 +297,10 @@ const init = (
   seed: string,
 ): { x: Float64Array; y: Float64Array; theta: Float64Array } => {
   const rng = seedrandom(seed);
-  const x = new Float64Array(numTriangles);
-  const y = new Float64Array(numTriangles);
-  const theta = new Float64Array(numTriangles);
-  for (let i = 0; i < numTriangles; ++i) {
+  const x = new Float64Array(numPolys);
+  const y = new Float64Array(numPolys);
+  const theta = new Float64Array(numPolys);
+  for (let i = 0; i < numPolys; ++i) {
     x[i] = size * rng();
     y[i] = size * rng();
     theta[i] = 2 * Math.PI * rng();
@@ -307,29 +308,29 @@ const init = (
   return { x, y, theta };
 };
 
-const serialize = ({ x, y, theta }: Triangles): Float64Array => {
-  const xs = new Float64Array(numTriangles * 6);
-  for (let i = 0; i < numTriangles; ++i) {
+const serialize = ({ x, y, theta }: Polys): Float64Array => {
+  const xs = new Float64Array(numPolys * 6);
+  for (let i = 0; i < numPolys; ++i) {
     xs[i] = x[i];
-    xs[i + numTriangles] = y[i];
-    xs[i + numTriangles * 2] = theta[i];
+    xs[i + numPolys] = y[i];
+    xs[i + numPolys * 2] = theta[i];
   }
   return xs;
 };
 
-const deserialize = (xs: Float64Array): Triangles => {
-  const x = new Float64Array(numTriangles);
-  const y = new Float64Array(numTriangles);
-  const theta = new Float64Array(numTriangles);
-  for (let i = 0; i < numTriangles; ++i) {
+const deserialize = (xs: Float64Array): Polys => {
+  const x = new Float64Array(numPolys);
+  const y = new Float64Array(numPolys);
+  const theta = new Float64Array(numPolys);
+  for (let i = 0; i < numPolys; ++i) {
     x[i] = xs[i];
-    y[i] = xs[i + numTriangles];
-    theta[i] = xs[i + numTriangles * 2];
+    y[i] = xs[i + numPolys];
+    theta[i] = xs[i + numPolys * 2];
   }
   return { x, y, theta };
 };
 
-const optimize = (f: lbfgs.Fn, triangles: Triangles): Triangles => {
+const optimize = (f: lbfgs.Fn, polys: Polys): Polys => {
   const cfg: lbfgs.Config = {
     m: 17,
     armijo: 0.001,
@@ -338,7 +339,7 @@ const optimize = (f: lbfgs.Fn, triangles: Triangles): Triangles => {
     maxSteps: 10,
     epsd: 1e-11,
   };
-  const xs = serialize(triangles);
+  const xs = serialize(polys);
   const state = lbfgs.firstStep(cfg, f, xs);
   let fx: number;
   lbfgs.stepUntil(cfg, f, xs, state, (info) => {
@@ -349,12 +350,10 @@ const optimize = (f: lbfgs.Fn, triangles: Triangles): Triangles => {
   return deserialize(xs);
 };
 
-const materializeFn = await compile(materialize);
+const hueFactor = 360 / numPolys;
 
-const hueFactor = 360 / numTriangles;
-
-const svg = ({ x, y, theta }: Triangles): string => {
-  const triangles = materializeFn({
+const svg = (materialize: Materialize, { x, y, theta }: Polys): string => {
+  const polys = materialize({
     x: x as any,
     y: y as any,
     theta: theta as any,
@@ -362,10 +361,10 @@ const svg = ({ x, y, theta }: Triangles): string => {
   const lines = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">`,
   ];
-  for (let i = 0; i < numTriangles; ++i) {
-    const { ax, ay, bx, by, cx, cy } = triangles[i];
+  for (let i = 0; i < numPolys; ++i) {
+    const poly = polys[i];
     const hue = Math.round(i * hueFactor);
-    const points = `${ax},${ay} ${bx},${by} ${cx},${cy}`;
+    const points = poly.map(([x, y]) => `${x},${y}`).join(" ");
     lines.push(`  <polygon points="${points}" fill="hsl(${hue} 50% 50%)" />`);
   }
   lines.push("</svg>", "");
@@ -375,15 +374,16 @@ const svg = ({ x, y, theta }: Triangles): string => {
 const out = "out";
 
 export interface Options {
+  m: number;
   minkowski: Minkowski;
   name: string;
 }
 
 export const run = async (opts: Options): Promise<void> => {
-  const f = await build(opts.minkowski);
+  const { render, grad: f } = await build(opts.m, opts.minkowski);
   const original = init("");
   const optimized = optimize(f, original);
-  const vector = svg(optimized);
+  const vector = svg(render, optimized);
   const raster = new Resvg(vector, { fitTo: { mode: "width", value: 1000 } })
     .render()
     .asPng();

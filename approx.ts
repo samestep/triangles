@@ -241,7 +241,9 @@ const convexPolygonMinkowskiSDF = (
   );
 };
 
+const m = 3;
 await run({
+  m,
   minkowski: (p, q) =>
     convexPolygonMinkowskiSDF(
       p,
