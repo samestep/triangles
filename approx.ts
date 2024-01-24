@@ -244,7 +244,7 @@ const convexPolygonMinkowskiSDF = (
 };
 
 const name = "approx";
-for (let m = 3; m < mMax; ++m) {
+for (let m = 3; m <= mMax; ++m) {
   const millis = await run({
     m,
     r,
