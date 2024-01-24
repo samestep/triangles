@@ -1,7 +1,0 @@
-{
-  "compilerOptions": {
-    "module": "Node16",
-    "strict": true,
-    "outDir": "dist"
-  }
-}
